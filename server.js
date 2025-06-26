@@ -13,9 +13,7 @@ app.use(express.json());
 
 const pool = new Pool({
 connectionString: process.env.DATABASE_URL,
-ssl: {
-rejectUnauthorized: false
-}
+ssl: { rejectUnauthorized: false }
 });
 
 // ✅ Route test pour voir si le backend répond
@@ -23,41 +21,46 @@ app.get('/', (req, res) => {
 res.send('✅ Serveur backend en ligne');
 });
 
-// ✅ Route pour vérifier le code d’accès
+// ✅ Route de vérification du code d'accès
 app.get('/api/check-code/:code', async (req, res) => {
 const { code } = req.params;
 
 try {
 const client = await pool.connect();
 
-// Cherche d’abord dans les logements
+// Vérifie d'abord dans les logements
 const resultLogement = await client.query(
 'SELECT * FROM logements WHERE code_acces = $1',
 [code]
 );
 
 if (resultLogement.rows.length > 0) {
-return res.json({ type: 'voyageur', logement: resultLogement.rows[0] });
+client.release();
+return res.json({
+type: 'voyageur',
+logement: resultLogement.rows[0]
+});
 }
 
-// Sinon cherche dans les hôtes
+// Sinon, vérifie dans les hôtes
 const resultHote = await client.query(
-'SELECT * FROM hote_admin WHERE code_admin = $1',
+'SELECT * FROM hote_admin WHERE code_acces = $1',
 [code]
 );
 
 if (resultHote.rows.length > 0) {
 const isMainAdmin = code === 'nomavia.io&890983636628';
+client.release();
 return res.json({
 type: isMainAdmin ? 'admin' : 'hote',
 hote: resultHote.rows[0]
 });
 }
 
-res.status(404).json({ error: 'Code inconnu' });
 client.release();
+res.status(404).json({ error: 'Code inconnu' });
 } catch (error) {
-console.error(error);
+console.error('Erreur lors de la vérification du code :', error);
 res.status(500).json({ error: 'Erreur serveur' });
 }
 });
@@ -66,4 +69,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
 console.log(`✅ Serveur backend en ligne sur le port ${PORT}`);
 });
-	
