@@ -68,6 +68,45 @@ res.status(500).json({ error: 'Erreur serveur' });
 // ✅ Route pour récupérer tous les logements d’un hôte
 app.get('/api/logements-par-hote/:nom', async (req, res) => {
 const { nom } = req.params;
+// ✅ Route GET - toutes les conversations liées à un code
+app.get('/api/conversations/:code_acces', async (req, res) => {
+const { code_acces } = req.params;
+
+try {
+const client = await pool.connect();
+const result = await client.query(
+'SELECT * FROM conversations WHERE code_acces = $1 ORDER BY horodatage ASC',
+[code_acces]
+);
+res.json(result.rows);
+client.release();
+} catch (error) {
+console.error('Erreur récupération conversations :', error);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
+
+// ✅ Route POST - ajouter une intervention d'hôte
+app.post('/api/conversations', async (req, res) => {
+const { code_acces, auteur, message } = req.body;
+
+if (!code_acces || !auteur || !message) {
+return res.status(400).json({ error: 'Champs manquants' });
+}
+
+try {
+const client = await pool.connect();
+await client.query(
+'INSERT INTO conversations (code_acces, auteur, message) VALUES ($1, $2, $3)',
+[code_acces, auteur, message]
+);
+client.release();
+res.status(201).json({ message: 'Message ajouté' });
+} catch (error) {
+console.error('Erreur ajout message :', error);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
 
 try {
 const client = await pool.connect();
