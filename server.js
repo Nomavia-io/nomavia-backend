@@ -123,6 +123,18 @@ res.status(500).json({ error: 'Erreur lors du chargement des logements.' });
 });
 
 const PORT = process.env.PORT || 3000;
+// ✅ Route pour récupérer tous les logements
+app.get('/api/logements-tous', async (req, res) => {
+try {
+const client = await pool.connect();
+const result = await client.query('SELECT * FROM logements');
+res.json(result.rows); // ✅ renvoie un JSON correct
+client.release();
+} catch (error) {
+console.error('Erreur /api/logements-tous :', error);
+res.status(500).json({ error: 'Erreur serveur' }); // ✅ renvoie JSON même en erreur
+}
+});
 app.listen(PORT, () => {
 console.log(`✅ Serveur backend en ligne sur le port ${PORT}`);
 });
