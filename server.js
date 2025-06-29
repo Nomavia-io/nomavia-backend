@@ -76,6 +76,19 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
+// ✅ Statistiques globales (📊)
+app.get('/api/stats/messages', async (req, res) => {
+try {
+const client = await pool.connect();
+const result = await client.query('SELECT COUNT(*) FROM conversations');
+client.release();
+res.json({ total: parseInt(result.rows[0].count) });
+} catch (error) {
+console.error('Erreur statistiques :', error);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
+
 // ✅ Tous les logements d’un hôte
 app.get('/api/logements-par-hote/:nom', async (req, res) => {
 const { nom } = req.params;
@@ -161,3 +174,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
 console.log(`✅ Serveur backend en ligne sur le port ${PORT}`);
 });
+	
