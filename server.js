@@ -65,6 +65,24 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
+// ✅ Route pour récupérer tous les logements d’un hôte
+app.get('/api/logements-par-hote/:nom', async (req, res) => {
+const { nom } = req.params;
+
+try {
+const client = await pool.connect();
+const result = await client.query(
+'SELECT * FROM logements WHERE nom_hote = $1',
+[nom]
+);
+res.json(result.rows);
+client.release();
+} catch (error) {
+console.error(error);
+res.status(500).json({ error: 'Erreur lors du chargement des logements.' });
+}
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
 console.log(`✅ Serveur backend en ligne sur le port ${PORT}`);
