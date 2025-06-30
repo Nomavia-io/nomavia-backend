@@ -149,7 +149,6 @@ if (!code_acces || !auteur || !message) {
 return res.status(400).json({ error: 'Champs manquants' });
 }
 
-// 🔍 Liste de mots déclencheurs d’alerte
 const motsCritiques = ['urgence', 'coupure', 'wifi', 'problème', 'inondation', 'danger', 'fuite', 'plainte'];
 const alerte = motsCritiques.some(mot =>
 message.toLowerCase().includes(mot.toLowerCase())
@@ -169,9 +168,30 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
+// ✅ NOUVELLE ROUTE : Envoi assistance depuis voyageur
+app.post('/api/assistance', async (req, res) => {
+const { code_acces, message } = req.body;
+
+if (!code_acces || !message) {
+return res.status(400).json({ error: 'Champs manquants' });
+}
+
+try {
+const client = await pool.connect();
+await client.query(
+'INSERT INTO assistance (code_acces, message) VALUES ($1, $2)',
+[code_acces, message]
+);
+client.release();
+res.status(201).json({ message: 'Demande d’assistance enregistrée' });
+} catch (error) {
+console.error('Erreur ajout assistance :', error);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
+
 // ✅ Lancement du serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
 console.log(`✅ Serveur backend en ligne sur le port ${PORT}`);
 });
-	
