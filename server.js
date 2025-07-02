@@ -1,179 +1,82 @@
-import express from 'express';
-import cors from 'cors';
-import pg from 'pg';
-import dotenv from 'dotenv';
+// 📁 server.js complet mis à jour
 
-dotenv.config();
+const express = require('express');
+const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
+const bodyParser = require('body-parser');
+require('dotenv').config();
 
-const { Pool } = pg;
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-const pool = new Pool({
-connectionString: process.env.DATABASE_URL,
-ssl: { rejectUnauthorized: false }
-});
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// ✅ Route test
-app.get('/', (req, res) => res.json({ ok: true, message: 'Serveur backend en ligne' }));
-
-// ✅ Vérification du code d'accès
-app.get('/api/check-code/:code', async (req, res) => {
-const { code } = req.params;
-try {
-const client = await pool.connect();
-const rLog = await client.query('SELECT * FROM logements WHERE code_acces = $1', [code]);
-if (rLog.rows.length > 0) {
-client.release();
-return res.json({ type: 'voyageur', logement: rLog.rows[0] });
-}
-const rHote = await client.query('SELECT * FROM hote_admin WHERE code_acces = $1', [code]);
-if (rHote.rows.length > 0) {
-const isMainAdmin = code === 'nomavia.io&890983636628';
-client.release();
-return res.json({ type: isMainAdmin ? 'admin' : 'hote', hote: rHote.rows[0] });
-}
-client.release();
-return res.status(404).json({ error: 'Code inconnu' });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Tous les logements
-app.get('/api/logements-tous', async (req, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query('SELECT * FROM logements');
-client.release();
-res.json(result.rows);
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Statistiques messages
-app.get('/api/stats/messages', async (req, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query('SELECT COUNT(*) FROM conversations');
-client.release();
-res.json({ total: parseInt(result.rows[0].count, 10) });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Logements par hôte
-app.get('/api/logements-par-hote/:nom', async (req, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query('SELECT * FROM logements WHERE nom_hote = $1', [req.params.nom]);
-client.release();
-res.json(result.rows);
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Conversations d’un logement
-app.get('/api/conversations/:code_acces', async (req, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query(
-'SELECT * FROM conversations WHERE code_acces = $1 ORDER BY horodatage ASC',
-[req.params.code_acces]
-);
-client.release();
-res.json(result.rows);
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Codes logements avec alertes
-app.get('/api/logements-avec-alertes', async (_, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query('SELECT DISTINCT code_acces FROM conversations WHERE alerte = true');
-client.release();
-res.json(result.rows.map(r => r.code_acces));
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ Messages d’assistance (reçus par admin)
-app.get('/api/assistance', async (_, res) => {
-try {
-const client = await pool.connect();
-const result = await client.query('SELECT * FROM assistance ORDER BY id DESC');
-client.release();
-res.json(result.rows);
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ POST message dans conversation
-app.post('/api/conversations', async (req, res) => {
-const { code_acces, auteur, message } = req.body;
-if (!code_acces || !auteur || !message) return res.status(400).json({ error: 'Champs manquants' });
-
-const motsCritiques = ['urgence', 'coupure', 'wifi', 'problème', 'inondation', 'danger', 'fuite', 'plainte'];
-const alerte = motsCritiques.some(m => message.toLowerCase().includes(m));
-
-try {
-const client = await pool.connect();
-await client.query(
-'INSERT INTO conversations (code_acces, auteur, message, alerte) VALUES ($1,$2,$3,$4)',
-[code_acces, auteur, message, alerte]
-);
-client.release();
-res.status(201).json({ message: 'Ajouté', alerte });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ POST message d’assistance
+// 📩 POST - Enregistrer un message d'assistance
 app.post('/api/assistance', async (req, res) => {
-const { code_acces, message } = req.body;
-if (!code_acces || !message) return res.status(400).json({ error: 'Champs manquants' });
-
-try {
-const client = await pool.connect();
-await client.query('INSERT INTO assistance (code_acces, message) VALUES ($1, $2)', [code_acces, message]);
-client.release();
-res.status(201).json({ message: 'Assistance enregistrée' });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
+  const { code_acces, message, auteur } = req.body;
+  const { error } = await supabase.from('assistance').insert({
+    code_acces,
+    message,
+    auteur,
+    lu_admin: false,
+    lu_voyageur: auteur === 'admin'
+  });
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(200).json({ success: true });
 });
 
-// ✅ PATCH pour marquer un message d’assistance comme "traité"
-app.patch('/api/assistance/:id', async (req, res) => {
-const { id } = req.params;
-try {
-const client = await pool.connect();
-await client.query('UPDATE assistance SET traite = true WHERE id = $1', [id]);
-client.release();
-res.json({ message: 'Marqué comme traité' });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
+// 📥 GET - Récupérer tous les messages d’assistance
+app.get('/api/assistance', async (req, res) => {
+  const { data, error } = await supabase
+    .from('assistance')
+    .select('*')
+    .order('horodatage', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Serveur en ligne sur port ${PORT}`));
+// 📥 GET - Récupérer les messages pour un logement spécifique
+app.get('/api/assistance/:code_acces', async (req, res) => {
+  const code = req.params.code_acces;
+  const { data, error } = await supabase
+    .from('assistance')
+    .select('*')
+    .eq('code_acces', code)
+    .order('horodatage', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ✅ PATCH - Marquer messages comme lus (admin ou voyageur)
+app.patch('/api/assistance/lu', async (req, res) => {
+  const { code_acces, lu_par } = req.body;
+  const colonne = lu_par === 'admin' ? 'lu_admin' : 'lu_voyageur';
+  const { error } = await supabase
+    .from('assistance')
+    .update({ [colonne]: true })
+    .eq('code_acces', code_acces);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// 🔴 GET - Compter les messages non lus pour un utilisateur
+app.get('/api/assistance/non-lus/:code_acces/:role', async (req, res) => {
+  const { code_acces, role } = req.params;
+  const colonne = role === 'admin' ? 'lu_admin' : 'lu_voyageur';
+  const { count, error } = await supabase
+    .from('assistance')
+    .select('*', { count: 'exact', head: true })
+    .eq('code_acces', code_acces)
+    .eq(colonne, false);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ nonLus: count });
+});
+
+// ✅ Serveur en ligne
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Serveur Nomavia en ligne sur le port ${PORT}`);
+});
