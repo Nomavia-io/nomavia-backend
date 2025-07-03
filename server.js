@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { WebSocketServer } from 'ws';
+import http from 'http';
 
 dotenv.config();
 
@@ -15,10 +17,29 @@ connectionString: process.env.DATABASE_URL,
 ssl: { rejectUnauthorized: false }
 });
 
-// ✅ Route test
+// Serveur HTTP + WebSocket
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+const clients = new Set();
+
+wss.on('connection', (ws) => {
+clients.add(ws);
+ws.on('close', () => clients.delete(ws));
+});
+
+// Fonction broadcast
+const broadcast = (payload) => {
+for (const client of clients) {
+if (client.readyState === 1) {
+client.send(JSON.stringify(payload));
+}
+}
+};
+
+// Test de vie
 app.get('/', (req, res) => res.json({ ok: true, message: 'Serveur backend en ligne' }));
 
-// ✅ Vérification du code d'accès
+// Vérification du code d'accès
 app.get('/api/check-code/:code', async (req, res) => {
 const { code } = req.params;
 try {
@@ -42,7 +63,7 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Tous les logements
+// Tous les logements
 app.get('/api/logements-tous', async (req, res) => {
 try {
 const client = await pool.connect();
@@ -55,7 +76,7 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Statistiques messages
+// Stats messages
 app.get('/api/stats/messages', async (req, res) => {
 try {
 const client = await pool.connect();
@@ -68,7 +89,7 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Logements par hôte
+// Logements par hôte
 app.get('/api/logements-par-hote/:nom', async (req, res) => {
 try {
 const client = await pool.connect();
@@ -81,7 +102,7 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Conversations d’un logement
+// Conversations pour un logement
 app.get('/api/conversations/:code_acces', async (req, res) => {
 try {
 const client = await pool.connect();
@@ -97,7 +118,7 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Codes logements avec alertes
+// Codes avec alertes
 app.get('/api/logements-avec-alertes', async (_, res) => {
 try {
 const client = await pool.connect();
@@ -110,11 +131,16 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ Messages d’assistance (reçus par admin)
+// 📩 GET messages assistance
 app.get('/api/assistance', async (_, res) => {
 try {
 const client = await pool.connect();
-const result = await client.query('SELECT * FROM assistance ORDER BY id DESC');
+const result = await client.query(`
+SELECT a.*, r.reponse
+FROM assistance a
+LEFT JOIN reponses_assistance r ON a.id = r.id_assistance
+ORDER BY a.id DESC
+`);
 client.release();
 res.json(result.rows);
 } catch (e) {
@@ -123,7 +149,49 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ POST message dans conversation
+// 📬 POST message assistance (voyageur)
+app.post('/api/assistance', async (req, res) => {
+const { code_acces, message } = req.body;
+if (!code_acces || !message) return res.status(400).json({ error: 'Champs manquants' });
+
+try {
+const client = await pool.connect();
+const result = await client.query(
+'INSERT INTO assistance (code_acces, message) VALUES ($1, $2) RETURNING *',
+[code_acces, message]
+);
+client.release();
+
+broadcast({ type: 'nouvelle_assistance', data: result.rows[0] });
+res.status(201).json({ message: 'Assistance enregistrée' });
+} catch (e) {
+console.error(e);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
+
+// ✅ POST réponse admin à un message d’assistance
+app.post('/api/assistance/reponse', async (req, res) => {
+const { id_assistance, reponse } = req.body;
+if (!id_assistance || !reponse) return res.status(400).json({ error: 'Champs manquants' });
+
+try {
+const client = await pool.connect();
+const result = await client.query(
+'INSERT INTO reponses_assistance (id_assistance, reponse) VALUES ($1, $2) RETURNING *',
+[id_assistance, reponse]
+);
+client.release();
+
+broadcast({ type: 'reponse_assistance', data: result.rows[0] });
+res.status(201).json({ message: 'Réponse enregistrée' });
+} catch (e) {
+console.error(e);
+res.status(500).json({ error: 'Erreur serveur' });
+}
+});
+
+// POST conversation (chat)
 app.post('/api/conversations', async (req, res) => {
 const { code_acces, auteur, message } = req.body;
 if (!code_acces || !auteur || !message) return res.status(400).json({ error: 'Champs manquants' });
@@ -133,11 +201,13 @@ const alerte = motsCritiques.some(m => message.toLowerCase().includes(m));
 
 try {
 const client = await pool.connect();
-await client.query(
-'INSERT INTO conversations (code_acces, auteur, message, alerte) VALUES ($1,$2,$3,$4)',
+const inserted = await client.query(
+'INSERT INTO conversations (code_acces, auteur, message, alerte) VALUES ($1,$2,$3,$4) RETURNING *',
 [code_acces, auteur, message, alerte]
 );
 client.release();
+
+broadcast({ type: 'nouveau_message', data: inserted.rows[0] });
 res.status(201).json({ message: 'Ajouté', alerte });
 } catch (e) {
 console.error(e);
@@ -145,35 +215,6 @@ res.status(500).json({ error: 'Erreur serveur' });
 }
 });
 
-// ✅ POST message d’assistance
-app.post('/api/assistance', async (req, res) => {
-const { code_acces, message } = req.body;
-if (!code_acces || !message) return res.status(400).json({ error: 'Champs manquants' });
-
-try {
-const client = await pool.connect();
-await client.query('INSERT INTO assistance (code_acces, message) VALUES ($1, $2)', [code_acces, message]);
-client.release();
-res.status(201).json({ message: 'Assistance enregistrée' });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
-// ✅ PATCH pour marquer un message d’assistance comme "traité"
-app.patch('/api/assistance/:id', async (req, res) => {
-const { id } = req.params;
-try {
-const client = await pool.connect();
-await client.query('UPDATE assistance SET traite = true WHERE id = $1', [id]);
-client.release();
-res.json({ message: 'Marqué comme traité' });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: 'Erreur serveur' });
-}
-});
-
+// ✅ Serveur HTTP + WebSocket
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Serveur en ligne sur port ${PORT}`));
+server.listen(PORT, () => console.log(`✅ Serveur en ligne sur port ${PORT}`));
