@@ -25,6 +25,27 @@ const clients = new Set();
 wss.on('connection', (ws) => {
 clients.add(ws);
 ws.on('close', () => clients.delete(ws));
+
+// ✅ Réception message admin via WebSocket
+ws.on('message', async (data) => {
+try {
+const parsed = JSON.parse(data);
+if (parsed.type === 'reponse_admin') {
+const { code_acces, message } = parsed;
+
+const client = await pool.connect();
+const inserted = await client.query(
+'INSERT INTO conversations (code_acces, auteur, message, alerte) VALUES ($1, $2, $3, false) RETURNING *',
+[code_acces, 'admin', message]
+);
+client.release();
+
+broadcast({ type: 'nouveau_message', data: inserted.rows[0] });
+}
+} catch (e) {
+console.error('Erreur WebSocket admin :', e);
+}
+});
 });
 
 // Fonction broadcast
